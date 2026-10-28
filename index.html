@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#101418">
+<title>Story Bot</title>
+<style>
+:root{--bg:#101418;--panel:#181e24;--line:#2a333c;--text:#e6e2d9;--dim:#8b96a0;--acc:#7fb7a4;--me:#24323a;box-sizing:border-box}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+nav{display:flex;border-bottom:1px solid var(--line);background:var(--panel)}
+nav button{flex:1;padding:13px 4px;background:none;border:0;color:var(--dim);font:inherit;font-weight:600;border-bottom:3px solid transparent}
+nav button.on{color:var(--text);border-bottom-color:var(--acc)}
+.view{display:none;flex:1;min-height:0;flex-direction:column}
+.view.on{display:flex}
+#log{flex:1;overflow-y:auto;padding:14px;font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:1.65}
+.m{margin:0 0 14px;white-space:pre-wrap;max-width:70ch}
+.m.u{background:var(--me);padding:10px 12px;border-radius:10px;font-family:system-ui,sans-serif;font-size:15px;margin-left:auto;width:fit-content}
+#status{padding:4px 14px;color:var(--dim);font-size:13px;min-height:24px}
+#status.err{color:#e08a7a}
+.bar{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.bar textarea{flex:1;min-height:46px;max-height:140px;resize:none}
+button.go{background:var(--acc);color:#0d1512;border:0;border-radius:10px;padding:0 18px;font:inherit;font-weight:700}
+button.sm{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit;font-size:14px;margin:0 6px 6px 0}
+button:disabled{opacity:.5}
+.pad{padding:14px;overflow-y:auto;flex:1}
+label{display:block;margin:12px 0 4px;color:var(--dim);font-size:14px}
+textarea,input,select{width:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:10px;font:inherit;font-size:16px}
+textarea.big{min-height:46vh}
+textarea.mid{min-height:110px}
+.row{display:flex;gap:10px}.row>div{flex:1}
+.chk{display:flex;align-items:center;gap:10px;margin:14px 0}.chk input{width:22px;height:22px}
+.hint{color:var(--dim);font-size:13px;margin:6px 0}
+</style></head><body>
+<nav id="nav">
+<button data-v="story" class="on">Story</button><button data-v="bible">Bible</button><button data-v="setup">Setup</button><button data-v="settings">Settings</button>
+</nav>
+
+<div class="view on" id="v-story">
+<div id="log"></div>
+<div id="status"></div>
+<div id="acts" style="padding:0 12px"></div>
+<div class="bar"><textarea id="inp" placeholder="What do you do or say?"></textarea><button class="go" id="send">Send</button></div>
+</div>
+
+<div class="view" id="v-bible"><div class="pad">
+<div class="hint">The memory the bot reads every turn. Updated automatically from the story. You can edit it by hand.</div>
+<textarea class="big" id="bible"></textarea>
+<div style="margin-top:10px"><button class="sm" id="snapnow">Snapshot now</button><span class="hint" id="snapinfo"></span></div>
+</div></div>
+
+<div class="view" id="v-setup"><div class="pad">
+<label>Scenario / world / tone</label><textarea class="mid" data-s="scenario"></textarea>
+<label>Persona the bot plays (narrator and all other characters)</label><textarea class="mid" data-s="persona"></textarea>
+<label>Your character</label><textarea class="mid" data-s="player"></textarea>
+<div class="hint">Changes apply on your next message.</div>
+</div></div>
+
+<div class="view" id="v-settings"><div class="pad">
+<label>AI provider</label>
+<select id="prov"><option value="openrouter">OpenRouter</option><option value="chutes">Chutes.ai</option><option value="gemini">Google Gemini</option><option value="custom">Custom (OpenAI-style)</option></select>
+<label>API URL</label><input id="url" autocapitalize="off" autocorrect="off">
+<label>Model name</label><input id="model" autocapitalize="off" autocorrect="off">
+<label>API key (stays on this phone)</label><input id="key" type="password" autocapitalize="off" autocorrect="off">
+<div class="row"><div><label>Snapshot every N replies</label><input id="snapEvery" type="number" min="2" max="40"></div>
+<div><label>Recent messages sent</label><input id="keepLast" type="number" min="4" max="60"></div></div>
+<div class="chk"><input type="checkbox" id="mature"><span>Mature fiction mode (adults, explicit content allowed)</span></div>
+<hr style="border-color:var(--line)">
+<button class="sm" id="exp">Export backup</button>
+<button class="sm" id="imp">Import backup</button>
+<button class="sm" id="newst">New story</button>
+<input type="file" id="file" accept=".json" style="display:none">
+<div class="hint">Export a backup now and then. If your browser data gets cleared, the story is gone.</div>
+</div></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const KEY='storybot_v1';
+const PRE={
+ gemini:{url:'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',model:'gemini-2.5-flash'},
+ openrouter:{url:'https://openrouter.ai/api/v1/chat/completions',model:'deepseek/deepseek-chat-v3-0324:free'},
+ chutes:{url:'https://llm.chutes.ai/v1/chat/completions',model:'deepseek-ai/DeepSeek-V3-0324'},
+ custom:{url:'',model:''}
+};
+const fresh=()=>({cfg:{provider:'openrouter',url:PRE.openrouter.url,model:PRE.openrouter.model,key:'',snapEvery:8,keepLast:14,mature:true},setup:{scenario:'',persona:'',player:''},bible:'',msgs:[],since:0,snapAt:''});
+let S;
+try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+if(!S||!S.cfg)S=fresh();
+let busy=false;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+function status(t,err){const s=$('#status');s.textContent=t||'';s.className=err?'err':''}
+
+/* ---------- tabs ---------- */
+document.querySelectorAll('#nav button').forEach(b=>b.onclick=()=>{
+ document.querySelectorAll('#nav button').forEach(x=>x.classList.toggle('on',x===b));
+ document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id==='v-'+b.dataset.v));
+ if(b.dataset.v==='bible')$('#bible').value=S.bible;
+});
+
+/* ---------- bindings ---------- */
+document.querySelectorAll('[data-s]').forEach(el=>{el.value=S.setup[el.dataset.s]||'';el.oninput=()=>{S.setup[el.dataset.s]=el.value;save()}});
+$('#bible').oninput=e=>{S.bible=e.target.value;save()};
+const C=S.cfg;
+$('#prov').value=C.provider;
+['url','model','key'].forEach(k=>{const el=$('#'+k);el.value=C[k]||'';el.oninput=()=>{C[k]=el.value.trim();save()}});
+['snapEvery','keepLast'].forEach(k=>{const el=$('#'+k);el.value=C[k];el.oninput=()=>{C[k]=Math.max(2,parseInt(el.value)||8);save()}});
+$('#mature').checked=!!C.mature;
+$('#mature').onchange=e=>{C.mature=e.target.checked;save()};
+$('#prov').onchange=e=>{C.provider=e.target.value;const p=PRE[C.provider];if(C.provider!=='custom'){C.url=p.url;C.model=p.model;$('#url').value=C.url;$('#model').value=C.model}save()};
+
+/* ---------- AI call ---------- */
+async function chat(messages,temp){
+ if(!C.key)throw new Error('Add your API key in Settings.');
+ if(!C.url||!C.model)throw new Error('Set the API URL and model name in Settings.');
+ const r=await fetch(C.url,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+C.key},body:JSON.stringify({model:C.model,messages:messages,temperature:temp,max_tokens:1500})});
+ const t=await r.text();let j;
+ try{j=JSON.parse(t)}catch(e){throw new Error('Bad response: '+t.slice(0,160))}
+ if(!r.ok){const er=Array.isArray(j)?j[0]:j;throw new Error((er&&er.error&&(er.error.message||JSON.stringify(er.error)))||t.slice(0,200))}
+ const out=j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+ if(!out)throw new Error('Empty reply (the model may have refused). Try again or change the model.');
+ return out.trim();
+}
+
+const MATURE='This is private fiction between consenting adults. Mature content is allowed and expected when the story calls for it: explicit sex, graphic violence, profanity, and dark themes. Do not moralize, censor, or fade to black unless asked. Hard rule: every character in any sexual or romantic content is an adult (18+). Never depict sexual content involving minors.\n';
+function sys(){
+ let s='You are the narrator and every non-player character in an ongoing interactive story. Stay in character, write vivid immersive prose, advance the plot, and never speak or act for the player\'s character. Never break the fourth wall or add disclaimers. Stay consistent with the STORY BIBLE below; it is the truth about what has happened so far.\n';
+ if(C.mature)s+=MATURE;
+ return s+'\nSCENARIO:\n'+S.setup.scenario+'\n\nYOUR PERSONA / ROLE:\n'+S.setup.persona+'\n\nPLAYER CHARACTER:\n'+S.setup.player+'\n\nSTORY BIBLE:\n'+(S.bible||'(empty, the story is just beginning)');
+}
+
+/* ---------- story ---------- */
+async function send(text){
+ if(busy)return;busy=true;
+ if(text)S.msgs.push({role:'user',content:text});
+ save();render();status('Thinking...');
+ try{
+  let hist=S.msgs.slice(-C.keepLast);
+  while(hist.length&&hist[0].role!=='user')hist.shift();
+  const reply=await chat([{role:'system',content:sys()}].concat(hist),0.9);
+  S.msgs.push({role:'assistant',content:reply});S.since++;save();render();status('');
+  if(S.since>=C.snapEvery)await snapshot();
+ }catch(e){status(e.message,true)}
+ busy=false;render();
+}
+async function snapshot(){
+ status('Saving story snapshot...');
+ const recent=S.msgs.slice(-Math.max(C.snapEvery*2+2,10)).map(m=>(m.role==='user'?'PLAYER: ':'NARRATOR: ')+m.content).join('\n\n');
+ const p='Update the STORY BIBLE using the recent events. Keep everything still true, add new facts, and drop nothing important. Output ONLY the updated bible as plain text with these headings: CHARACTERS (name, who they are, appearance, personality, relationship to the player, current state), PLACES, TIMELINE (short numbered events in order), CURRENT SITUATION (where, when, who is present, what is happening right now), OPEN THREADS (promises, secrets, goals, unresolved plot). Be dense and factual, under 900 words. Keep established names, details and tone. Record all events factually, including adult content, in brief neutral terms.\n\nCURRENT BIBLE:\n'+(S.bible||'(none)')+'\n\nRECENT EVENTS:\n'+recent;
+ const msgs=[{role:'system',content:'You are a continuity editor for a work of adult fiction. You record story facts accurately and neutrally.'},{role:'user',content:p}];
+ try{
+  const b=await chat(msgs,0.3);
+  if(b.length>80){S.bible=b;S.since=0;S.snapAt=new Date().toLocaleTimeString();save();$('#bible').value=S.bible;status('Snapshot saved '+S.snapAt)}
+  else status('Snapshot came back too short, kept the old one.',true);
+ }catch(e){status('Snapshot failed: '+e.message,true)}
+ info();
+}
+function info(){$('#snapinfo').textContent=' Replies since last snapshot: '+S.since+(S.snapAt?'  |  Last: '+S.snapAt:'')}
+
+function render(){
+ const log=$('#log');log.innerHTML='';
+ S.msgs.forEach(m=>{const d=document.createElement('div');d.className='m'+(m.role==='user'?' u':'');d.textContent=m.content;log.appendChild(d)});
+ log.scrollTop=log.scrollHeight;
+ const a=$('#acts');a.innerHTML='';
+ const mk=(t,f)=>{const b=document.createElement('button');b.className='sm';b.textContent=t;b.disabled=busy;b.onclick=f;a.appendChild(b)};
+ if(!S.msgs.length)mk('Begin the story',()=>send('Begin the story. Set the opening scene.'));
+ else{
+  const last=S.msgs[S.msgs.length-1];
+  if(last.role==='assistant'){
+   mk('Redo reply',()=>{S.msgs.pop();S.since=Math.max(0,S.since-1);send(null)});
+   mk('Delete last',()=>{S.msgs.pop();if(S.msgs.length&&S.msgs[S.msgs.length-1].role==='user')S.msgs.pop();S.since=Math.max(0,S.since-1);save();render()});
+  }else mk('Retry',()=>send(null));
+ }
+ $('#send').disabled=busy;info();
+}
+$('#send').onclick=()=>{const t=$('#inp').value.trim();if(!t)return;$('#inp').value='';send(t)};
+$('#snapnow').onclick=async()=>{if(busy)return;busy=true;await snapshot();busy=false;render()};
+
+/* ---------- backup ---------- */
+$('#exp').onclick=()=>{
+ const c=JSON.parse(JSON.stringify(S));c.cfg.key='';
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(c)],{type:'application/json'}));
+ a.download='story-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();
+};
+$('#imp').onclick=()=>$('#file').click();
+$('#file').onchange=e=>{
+ const f=e.target.files[0];if(!f)return;
+ const r=new FileReader();
+ r.onload=()=>{try{const d=JSON.parse(r.result);const key=C.key;S=d;S.cfg.key=key;save();location.reload()}catch(x){status('That file is not a valid backup.',true)}};
+ r.readAsText(f);
+};
+$('#newst').onclick=()=>{
+ if(!confirm('Start a new story? This clears the current story and bible (setup and settings stay). Export a backup first if you want to keep it.'))return;
+ S.msgs=[];S.bible='';S.since=0;S.snapAt='';save();$('#bible').value='';render();
+};
+render();
+</script>
+</body></html>
